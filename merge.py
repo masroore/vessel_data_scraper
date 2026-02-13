@@ -2,6 +2,7 @@ import sqlite3
 import json
 import os
 from pathlib import Path
+import csv
 
 
 def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
@@ -33,26 +34,61 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
     )
     merged_conn.commit()
 
+    vt_cur = vt_db.cursor()
+    sx_cur = sx_db.cursor()
+
     # Countries mapping: normalized country name (UPPER, stripped) -> country code
     countries = dict()
 
-    # Try to load previously saved countries mapping from disk. We store it next to the
-    # merged DB using the same name but with the extension '.countries.json'. If loading
-    # fails, continue with an empty mapping.
+    # 1) Try to read a CSV mapping (countries.csv) in the current working directory.
+    #    Support files both with and without a header row. Each row should have at
+    #    least two columns: name,code. We normalize the country name to UPPER/TRIM.
+    csv_path = Path("countries.csv")
+    if csv_path.exists():
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if not row:
+                        continue
+
+                    if len(row) < 2:
+                        continue
+
+                    c_name = row[0].strip().upper() if row[0].strip() else None
+                    c_code = row[1].strip().upper() if row[1].strip() else None
+                    if c_name and c_code:
+                        countries[c_name] = c_code
+        except Exception as e:
+            print(f"Warning: failed to read countries.csv: {e}")
+
+    # 2) Merge with an on-disk JSON mapping stored next to the merged DB (overrides CSV)
     countries_file = Path(merged_db_path).with_suffix(".countries.json")
-    if countries_file.exists():
+    if len(countries) == 0 and countries_file.exists():
         try:
             with countries_file.open("r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                # Normalize keys to trimmed upper-case for consistent lookups
-                countries = {
-                    (k.strip().upper() if k else k): v for k, v in loaded.items()
-                }
+                for k, v in loaded.items() if isinstance(loaded, dict) else []:
+                    if not k:
+                        continue
+                    nk = k.strip().upper()
+                    if v is None:
+                        continue
+                    countries[nk] = v.strip().upper() if isinstance(v, str) else v
         except Exception as e:
             print(f"Warning: failed to load countries file {countries_file}: {e}")
 
-    vt_cur = vt_db.cursor()
-    sx_cur = sx_db.cursor()
+    # 3) If still empty, attempt to derive mappings from the ShipXplorer DB
+    # noinspection SqlDialectInspection
+    sx_cur.execute(
+        "SELECT DISTINCT flag_country_code, flag_country FROM vessels WHERE flag_country_code IS NOT NULL AND flag_country IS NOT NULL"
+    )
+    for r in sx_cur.fetchall():
+        c_code = r[0].strip().upper() if r[0] else None
+        c_name = r[1].strip().upper() if r[1] else None
+        if c_name and c_code and c_name not in countries:
+            countries[c_name] = c_code
+
     # noinspection SqlDialectInspection
     vt_cur.execute(
         "SELECT mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam FROM vessels"
@@ -74,20 +110,20 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
         if sx_row:
             row = list(row)
             # Normalize the country code and country name for consistent handling
-            cc = sx_row[5].strip().upper() if sx_row[5] else None
-            country_key = row[6].strip().upper() if row[6] else None
+            c_code = sx_row[5].strip().upper() if sx_row[5] else None
+            c_name = row[6].strip().upper() if row[6] else None
 
             # If no country code from sx_row, try to look up by normalized country name
-            if not cc and country_key and country_key in countries:
-                cc = countries[country_key]
+            if not c_code and c_name and c_name in countries:
+                c_code = countries[c_name]
 
             # Fill in the flag_country_code if missing
             if not row[5]:
-                row[5] = cc
+                row[5] = c_code
 
             # Store mapping for future lookups (use normalized country name)
-            if country_key and country_key not in countries and cc:
-                countries[country_key] = cc
+            if c_name and c_name not in countries and c_code:
+                countries[c_name] = c_code
 
             # If the vessel exists in both databases, prefer ShipXplorer data
             cursor.execute(
