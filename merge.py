@@ -14,8 +14,9 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS vessels (
-            mmsi TEXT PRIMARY KEY,
-            imo TEXT NOT NULL UNIQUE,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mmsi TEXT NOT NULL UNIQUE,
+            imo TEXT NOT NULL,
             name TEXT NOT NULL,
             vessel_type TEXT,
             callsign TEXT,
@@ -35,13 +36,19 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
     vt_cur.execute(
         "SELECT mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam FROM vessels"
     )
+
+    count = 0
     rows = vt_cur.fetchall()
     for row in rows:
         sx_cur.execute(
-            "select mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam from vessels where mmsi = ?",
-            (row[0],),
+            "select mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam from vessels where mmsi = ? or imo = ?",
+            (
+                row[0],
+                row[1],
+            ),
         )
         sx_row = sx_cur.fetchone()
+
         if sx_row:
             row = list(row)
             cc = sx_row[5].strip().upper() if sx_row[5] else None
@@ -51,7 +58,7 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
                 row[5] = cc
 
             if not row[6] in countries and cc:
-                countries[row[6]] = cc.strip().upper()
+                countries[row[6]] = cc
 
             # If the vessel exists in both databases, prefer ShipXplorer data
             cursor.execute(
@@ -62,6 +69,10 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
                 """,
                 row,
             )
+            count += 1
+            if count % 100 == 0:
+                print(f"Merged {count} vessels...", end="\r")
+                merged_conn.commit()
 
     # Commit changes and close connections
     merged_conn.commit()
