@@ -1,10 +1,9 @@
 import logging
 import sqlite3
 from string import ascii_uppercase
-from xxsubtype import bench
 
-from selectolax.lexbor import LexborHTMLParser as Parser
 import requests_cache
+from selectolax.lexbor import LexborHTMLParser as Parser
 
 session = requests_cache.CachedSession("_vesseltrqcker_cache")
 
