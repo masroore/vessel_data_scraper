@@ -33,9 +33,10 @@ def setup_environment(db_name: str = DB_NAME) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             mmsi TEXT NOT NULL,
-            imo TEXT,
+            imo TEXT NOT NULL,
             vessel_type TEXT,
             callsign TEXT,
+            flag_country_code TEXT,
             flag_country TEXT,
             length REAL,
             beam REAL
