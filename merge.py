@@ -91,8 +91,9 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS vessels (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mmsi TEXT NOT NULL UNIQUE,
+            --id INTEGER PRIMARY KEY AUTOINCREMENT,
+            --mmsi TEXT NOT NULL UNIQUE,
+            mmsi TEXT PRIMARY KEY,
             imo TEXT NOT NULL,
             name TEXT NOT NULL,
             vessel_type TEXT,
@@ -121,47 +122,45 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
     count = 0
     rows = vt_cur.fetchall()
     for row in rows:
-        # noinspection SqlDialectInspection
-        sx_cur.execute(
-            "select mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam from vessels where mmsi = ? or imo = ?",
-            (
-                row[0],
-                row[1],
-            ),
-        )
-        sx_row = sx_cur.fetchone()
+        c_code = row[5].strip().upper() if row[5] else None
+        c_name = row[6].strip().upper() if row[6] else None
+        if not c_code and c_name in countries:
+            c_code = countries[c_name]
 
-        if sx_row:
-            row = list(row)
-            # Normalize the country code and country name for consistent handling
-            c_code = sx_row[5].strip().upper() if sx_row[5] else None
-            c_name = row[6].strip().upper() if row[6] else None
-
-            # If no country code from sx_row, try to look up by normalized country name
-            if not c_code and c_name and c_name in countries:
-                c_code = countries[c_name]
-
-            # Fill in the flag_country_code if missing
-            if not row[5]:
-                row[5] = c_code
-
-            # Store mapping for future lookups (use normalized country name)
-            if c_name and c_name not in countries and c_code:
-                countries[c_name] = c_code
-
-            # If the vessel exists in both databases, prefer ShipXplorer data
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO vessels (
-                    mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                row,
+        if not c_code:
+            # noinspection SqlDialectInspection
+            sx_cur.execute(
+                "select mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam from vessels where mmsi = ? or imo = ?",
+                (
+                    row[0],
+                    row[1],
+                ),
             )
-            count += 1
-            if count % 100 == 0:
-                print(f"Merged {count} vessels...", end="\r")
-                merged_conn.commit()
+            sx_row = sx_cur.fetchone()
+            if sx_row:
+                # Normalize the country code and country name for consistent handling
+                c_code = sx_row[5].strip().upper() if sx_row[5] else None
+
+                print(c_name, c_code)
+                # Store mapping for future lookups (use normalized country name)
+                if c_name and c_name not in countries and c_code:
+                    countries[c_name] = c_code
+
+        data = list(row)
+        data[5] = c_code  # Update the country code in the row data
+        print(data)
+        cursor.execute(
+            """
+            INSERT INTO vessels (
+                mmsi, imo, name, vessel_type, callsign, flag_country_code, flag_country, length, beam
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            data,
+        )
+        count += 1
+        if count % 100 == 0:
+            print(f"Merged {count} vessels...", end="\r")
+            merged_conn.commit()
 
     # Commit changes and close connections
     merged_conn.commit()
