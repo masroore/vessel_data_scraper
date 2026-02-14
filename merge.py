@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 import csv
 from typing import Any
@@ -67,10 +68,11 @@ def load_countries_mapping(cursor: sqlite3.Cursor) -> dict[Any, Any] | None:
 
 def save_countries_mapping(countries: dict[Any, Any]):
     countries_file = get_countries_file("merged_vessels.db")
+    data = OrderedDict(countries.items())
     try:
         tmp_path = countries_file.with_suffix(".countries.json.tmp")
         with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(countries, f, indent=2, ensure_ascii=False)
+            json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
         # Atomic replace
         os.replace(str(tmp_path), str(countries_file))
     except Exception as e:
@@ -112,7 +114,6 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
 
     # Countries mapping: normalized country name (UPPER, stripped) -> country code
     countries = load_countries_mapping(sx_cur)
-    save_countries_mapping(countries)
 
     # noinspection SqlDialectInspection
     vt_cur.execute(
@@ -148,6 +149,8 @@ def merge_databases(sx_path: str, vt_path: str, merged_db_path: str):
 
         data = list(row)
         data[5] = c_code  # Update the country code in the row data
+        if data[4] and len(data[4].strip()) == 0:
+            data[4] = None  # Normalize empty callsign to NULL
         print(data)
         cursor.execute(
             """
